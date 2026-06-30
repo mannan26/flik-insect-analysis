@@ -15,6 +15,8 @@ import plotly.graph_objects as go
 from dash import Input, Output, State, callback_context, dcc, html
 from PIL import Image
 
+import db
+
 # ── Paths ────────────────────────────────────────────────────────────────────
 BASE_DIR = Path(__file__).parent / "output"
 RESULTS_CSV = BASE_DIR / "merged_results.csv"
@@ -31,16 +33,33 @@ _image_cache: dict[str, list[str]] = {}
 
 # ── Data loading ──────────────────────────────────────────────────────────────
 
+VERIFY_COLS = ["detection_verified", "detection_correct",
+               "classification_verified", "classification_correct", "corrected_name"]
+
+
 def load_results() -> pd.DataFrame:
     df = pd.read_csv(RESULTS_CSV)
     df["timestamp"] = pd.to_datetime(df["date"].astype(str) + " " + df["time"].astype(str))
     df["crop_id"] = df["track_id"].str[:8]
-    for col in ["detection_verified", "detection_correct", "classification_verified",
-                 "classification_correct", "corrected_name"]:
-        if col not in df.columns:
-            df[col] = pd.NA
+    for col in VERIFY_COLS:
+        df[col] = pd.NA
+    _apply_verifications(df)
+    for col in VERIFY_COLS:
         df[col] = df[col].astype(object)
     return df
+
+
+def _apply_verifications(df: pd.DataFrame):
+    """Merge DB verification data into the dataframe."""
+    vdata = db.load_verifications()
+    for tid, vals in vdata.items():
+        idx = df.index[df["track_id"] == tid]
+        if idx.empty:
+            continue
+        for col in VERIFY_COLS:
+            v = vals.get(col)
+            if v is not None:
+                df.loc[idx, col] = v
 
 
 def load_sensor_data() -> pd.DataFrame:
@@ -290,34 +309,30 @@ def _build_row_card(row) -> dbc.Card:
 
 # ── Persistence ───────────────────────────────────────────────────────────────
 
-def _save_to_csv():
-    save_df = results_df.drop(columns=["timestamp", "crop_id"], errors="ignore")
-    save_df.to_csv(RESULTS_CSV, index=False)
+def _update_df(track_id: str, **kwargs):
+    """Update in-memory dataframe after DB write."""
+    global results_df
+    idx = results_df.index[results_df["track_id"] == track_id]
+    for col, val in kwargs.items():
+        results_df.loc[idx, col] = val
 
 
 def save_detection(track_id: str, is_correct: bool):
-    global results_df
-    idx = results_df.index[results_df["track_id"] == track_id]
-    results_df.loc[idx, "detection_verified"] = True
-    results_df.loc[idx, "detection_correct"] = is_correct
-    _save_to_csv()
+    db.save_detection(track_id, is_correct)
+    _update_df(track_id, detection_verified=True, detection_correct=is_correct)
 
 
 def save_classification(track_id: str, is_correct: bool):
-    global results_df
-    idx = results_df.index[results_df["track_id"] == track_id]
-    results_df.loc[idx, "classification_verified"] = True
-    results_df.loc[idx, "classification_correct"] = is_correct
+    db.save_classification(track_id, is_correct)
+    updates = {"classification_verified": True, "classification_correct": is_correct}
     if is_correct:
-        results_df.loc[idx, "corrected_name"] = pd.NA
-    _save_to_csv()
+        updates["corrected_name"] = pd.NA
+    _update_df(track_id, **updates)
 
 
 def save_corrected_name(track_id: str, name: str):
-    global results_df
-    idx = results_df.index[results_df["track_id"] == track_id]
-    results_df.loc[idx, "corrected_name"] = name
-    _save_to_csv()
+    db.save_corrected_name(track_id, name)
+    _update_df(track_id, corrected_name=name)
 
 
 # ── App setup ─────────────────────────────────────────────────────────────────

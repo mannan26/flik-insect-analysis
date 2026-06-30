@@ -3,3 +3,4 @@ dash-bootstrap-components>=1.5
 pandas>=2.0
 pillow>=10.0
 plotly>=5.18
+psycopg2-binary>=2.9

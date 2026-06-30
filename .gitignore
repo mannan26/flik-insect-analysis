@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.DS_Store
+output/crops/
+output/merged_results.csv
+output/merged_sensors.csv
+sensor/
